@@ -1,0 +1,6 @@
+functions-framework==3.*
+google-generativeai==0.8.*
+pillow==11.1.*
+google-cloud-logging==3.11.*
+google-cloud-bigquery==3.29.*
+grpcio==1.60.1
