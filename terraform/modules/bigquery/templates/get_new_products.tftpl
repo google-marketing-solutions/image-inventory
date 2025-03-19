@@ -1,0 +1,81 @@
+-- Copyright 2025 Google LLC
+
+-- Licensed under the Apache License, Version 2.0 (the "License");
+-- you may not use this file except in compliance with the License.
+-- You may obtain a copy of the License at
+
+--     https://www.apache.org/licenses/LICENSE-2.0
+
+-- Unless required by applicable law or agreed to in writing, software
+-- distributed under the License is distributed on an "AS IS" BASIS,
+-- WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+-- See the License for the specific language governing permissions and
+-- limitations under the License.
+
+WITH
+  LatestDate AS (
+    SELECT
+      MAX(_PARTITIONTIME) AS `date`
+    FROM
+      `${PROJECT_ID}.${DATASET_ID}.Products_${MERCHANT_ID}`
+  ),
+  MainImages AS (
+    SELECT
+      offer_id,
+      merchant_id,
+      aggregator_id,
+      title,
+      product_type,
+      image_link
+    FROM
+      `${PROJECT_ID}.${DATASET_ID}.Products_${MERCHANT_ID}` AS P
+    WHERE
+      P._PARTITIONTIME = (
+        SELECT
+          `date`
+        FROM
+          LatestDate
+      )
+      AND image_link NOT IN (
+        SELECT DISTINCT image_link FROM `${PROJECT_ID}.${DATASET_ID}.image_classifications`
+      )
+  ),
+  AdditionalImages AS (
+    SELECT
+      offer_id,
+      merchant_id,
+      aggregator_id,
+      title,
+      product_type,
+      additional_image_link
+    FROM
+      `${PROJECT_ID}.${DATASET_ID}.Products_${MERCHANT_ID}` AS P,
+      UNNEST(additional_image_links) AS additional_image_link
+    WHERE
+      P._PARTITIONTIME = (
+        SELECT
+          `date`
+        FROM
+          LatestDate
+      )
+      AND additional_image_link NOT IN (
+        SELECT DISTINCT image_link FROM `${PROJECT_ID}.${DATASET_ID}.image_classifications`
+      )
+  ),
+  ImageLinks AS (
+    SELECT
+      offer_id,
+      merchant_id,
+      aggregator_id,
+      IFNULL(MI.title, AI.title) AS title,
+      IFNULL(MI.product_type, AI.product_type) AS product_type,
+      MI.image_link,
+      ARRAY_AGG(AI.additional_image_link IGNORE NULLS) AS additional_image_links
+    FROM
+      MainImages AS MI
+    FULL OUTER JOIN
+      AdditionalImages AS AI
+      USING (offer_id, merchant_id, aggregator_id)
+    GROUP BY 1, 2, 3, 4, 5, 6
+  )
+SELECT * FROM ImageLinks
