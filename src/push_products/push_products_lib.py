@@ -17,13 +17,11 @@
 import dataclasses
 import json
 import logging
-from typing import Optional
 
 from google.cloud import bigquery
-from google.cloud import logging as cloud_logging
 from google.cloud import tasks_v2
-
 from shared.common import Product
+
 
 class Error(Exception):
   """Base error class for this module."""
@@ -113,6 +111,10 @@ def push_products(
 
   Args:
     products (list[Product]): A list of Product dataclasses.
+    cloud_function_url (str): The URL of the Cloud Function to call.
+    project_id (str): Project ID for Cloud Tasks queue
+    location (str): Location for Cloud Tasks queue
+    queue_id (str): Queue ID for Cloud Tasks queue
 
   Raises:
     CloudTasksPublishError: if the Cloud Tasks publish fails

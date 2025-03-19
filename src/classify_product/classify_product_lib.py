@@ -16,23 +16,18 @@
 
 import dataclasses
 import datetime
-import enum
 import hashlib
 import io
 import json
 import logging
 import os
-import sys
-from typing import Optional
 
 from config.structured_output import LabeledImage
 from google.cloud import bigquery
 import google.generativeai as genai
-from google.generativeai.types import file_types
 from PIL import Image
 import requests
 from shared.common import Product
-from typing_extensions import TypedDict
 
 
 class Error(Exception):
@@ -79,13 +74,12 @@ class ProcessedImage:
 
 
 # HTTP
-# USER_AGENT = (  # Default requests user agent can cause 403 errors.
-#     'Mozilla/5.0 (Linux; Android 6.0.1; Nexus 5X Build/MMB29P)'
-#     ' AppleWebKit/537.36 (KHTML, like Gecko) Chrome/W.X.Y.Z Mobile'
-#     ' Safari/537.36 (compatible; Googlebot/2.1;'
-#     ' +http://www.google.com/bot.html)'
-# )
-USER_AGENT = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36")
+USER_AGENT = (  # Default requests user agent can cause 403 errors.
+    'Mozilla/5.0 (Linux; Android 6.0.1; Nexus 5X Build/MMB29P)'
+    ' AppleWebKit/537.36 (KHTML, like Gecko) Chrome/W.X.Y.Z Mobile'
+    ' Safari/537.36 (compatible; Googlebot/2.1;'
+    ' +http://www.google.com/bot.html)'
+)
 http_session = requests.Session()
 # Gemini
 MODEL_NAME = 'gemini-2.0-flash'
@@ -210,6 +204,7 @@ def write_result_to_bigquery(
 
   Args:
     processed_images: a list of ProcessedImage dataclasses to write rows for.
+    table_id: the BigQuery table to write results to
 
   Raises:
     BigQueryWriteError: if the BigQuery write fails
@@ -256,7 +251,7 @@ def process_product(product: Product, table_id: str):
     processed_images = [process_image(image_link) for image_link in image_links]
     run_multimodal_query(product, processed_images)
     write_result_to_bigquery(processed_images, table_id)
-  except Exception as e:
+  except Exception:
     logging.error(
         '[FAILED] Error processing product ID %s',
         product.offer_id,
