@@ -26,7 +26,7 @@ resource "google_bigquery_dataset" "dataset" {
     user_by_email = var.default_service_account_email
   }
   lifecycle {
-    # ignore_changes = [access]
+    ignore_changes = [access]
     prevent_destroy = true
   }
   depends_on = [module.module_services]

@@ -13,8 +13,8 @@ module "module_services" {
   disable_services_on_destroy = false
 }
 
-resource "google_cloud_tasks_queue" "classify_images_queue" {
-  name     = "classify-images-queue"
+resource "google_cloud_tasks_queue" "classify_products_queue" {
+  name     = "classify-products-queue"
   location = var.location
   http_target {
     oidc_token {

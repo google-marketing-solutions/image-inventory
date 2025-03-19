@@ -20,7 +20,6 @@ import os
 import classify_product_lib
 import functions_framework
 from google.cloud import logging as cloud_logging
-import google.generativeai as genai
 
 
 # Cloud Logging
@@ -31,18 +30,11 @@ logging_client.setup_logging()
 PROJECT_ID = os.environ.get('PROJECT_ID', 'Project ID env variable is not set.')
 DATASET_ID = os.environ.get('DATASET_ID', 'Dataset ID env variable is not set.')
 
-## Global Persistent Connections
-
-genai.configure(
-    api_key=os.environ.get(
-        'gemini_api_key', 'Gemini API key env variable is not set.'
-    )
-)
-
 
 @functions_framework.http
 def run(request) -> str:
   """HTTP Cloud Function."""
+
   if request.method != 'POST':
     return 'Method Not Allowed', 405
   if request.content_type != 'application/json':

@@ -101,7 +101,7 @@ module "functions_classify_product" {
   }
   secret_environment_variables = {
     gemini_api_key = {
-      key     = "gemini_api_key"
+      key     = "GOOGLE_API_KEY"
       secret  = module.secrets.secret_id
       version = "latest"
     }

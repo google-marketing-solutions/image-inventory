@@ -15,7 +15,7 @@
 """Structured output types for image labeling."""
 
 import enum
-from typing import TypedDict
+from typing_extensions import TypedDict
 
 
 class ImageType(str, enum.Enum):

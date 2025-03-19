@@ -23,8 +23,9 @@ import logging
 import os
 
 from config.structured_output import LabeledImage
+from google import genai
 from google.cloud import bigquery
-import google.generativeai as genai
+from google.genai import types
 from PIL import Image
 import requests
 from shared.common import Product
@@ -59,7 +60,7 @@ class ProcessedImage:
   """Processed image data class."""
 
   image_link: str
-  genai_file_reference: any
+  genai_file_reference: types.File
   mime_type: str
   width: int
   height: int
@@ -81,9 +82,11 @@ USER_AGENT = (  # Default requests user agent can cause 403 errors.
     ' +http://www.google.com/bot.html)'
 )
 http_session = requests.Session()
+# httpx (found in google.genai) has noisy logs, raise threshold to WARNING.
+logging.getLogger('httpx').setLevel(logging.WARNING)
 # Gemini
-MODEL_NAME = 'gemini-2.0-flash'
-genai_client = genai.GenerativeModel(model_name=MODEL_NAME)
+MODEL_NAME = os.environ.get('MODEL_NAME', 'gemini-2.0-flash')
+genai_client = genai.Client()
 # BigQuery
 bigquery_client = bigquery.Client()
 
@@ -115,10 +118,10 @@ def process_image(image_link: str) -> ProcessedImage:
   except Exception as e:
     raise ImagePullError(e) from e
 
-  # Upload to Gemini for multimodal query
+  # Upload image to Gemini for multimodal query.
   try:
-    genai_file_reference = genai.upload_file(
-        io.BytesIO(response_content), mime_type=mime_type
+    genai_file_reference = genai_client.files.upload(
+        file=io.BytesIO(response_content), config={'mime_type': mime_type}
     )
   except Exception as e:
     raise GenerativeAIError(e) from e
@@ -142,14 +145,17 @@ def process_image(image_link: str) -> ProcessedImage:
 
 def run_multimodal_query(
     product: Product, processed_images: list[ProcessedImage]
-):
-  """Runs a multimodal query to Gemini to classify the images.
+) -> str:
+  """Runs a multimodal query to Gemini to classify a set of images.
 
-  The determined type is written back to the ProcessedImage dataclass.
+  The LabeledImage class is written back to the ProcessedImage dataclass.
 
   Args:
     product: the Product dataclass for the images to be processed
     processed_images: a list of ProcessedImage dataclasses to classify
+
+  Returns:
+    the Gemini API response text
 
   Raises:
     GenerativeAIError: if the Gemini query fails
@@ -158,9 +164,8 @@ def run_multimodal_query(
 
   # Adding image indexes to the prompt to match the output with the images.
   # https://cloud.google.com/vertex-ai/generative-ai/docs/multimodal/image-understanding#best-practices
-  image_ids = ['image' + str(i) for i in range(len(processed_images))]
+  image_ids = ['image ' + str(i + 1) for i in range(len(processed_images))]
   prompt.extend(image_ids)
-
   prompt.append(_PROMPT)
   if product.title is not None:
     prompt.append(f'The product showcased by the images is: {product.title}')
@@ -171,30 +176,53 @@ def run_multimodal_query(
     )
 
   # Join the uploaded image references and prompt strings together.
-  payload = [i.genai_file_reference for i in processed_images] + [
-      '\n'.join(prompt)
-  ]
+  text_prompt = '\n'.join(prompt)
+  contents = [i.genai_file_reference for i in processed_images] + [text_prompt]
+  config = types.GenerateContentConfig(
+      response_mime_type='application/json',
+      response_schema=list[LabeledImage],
+      automatic_function_calling=types.AutomaticFunctionCallingConfig(
+          disable=True
+      ),
+      top_k=1,
+      top_p=0.2,
+  )
 
+  response = None
   try:
-    result = genai_client.generate_content(
-        payload,
-        generation_config=genai.GenerationConfig(
-            response_mime_type='application/json',
-            top_k=1,
-            top_p=0.2,
-            response_schema=list[LabeledImage],
-        ),
+    response = genai_client.models.generate_content(
+        model=MODEL_NAME, contents=contents, config=config
     )
+    labeled_images: list[LabeledImage] = response.parsed
+
+    if len(labeled_images) != len(processed_images):
+      raise ValueError(
+          'Gemini response length does not match number of images to be'
+          ' classified.'
+      )
+    for pos, labeled_image in enumerate(labeled_images):
+      processed_images[pos].labeled_image = labeled_image
   except Exception as e:
+    logging.warning(
+        '[ERROR] Detected error when processing Gemini response for product'
+        ' ID %s',
+        product.offer_id,
+        extra={
+            'json_fields': {
+                'product': product.to_json(),
+                'gemini_text_prompt': text_prompt,
+                'gemini_response': response.text if response else None,
+                'processed_images': [pi.to_json() for pi in processed_images],
+            }
+        },
+    )
     raise GenerativeAIError(e) from e
+  finally:
+    # Delete the uploaded images from Gemini after processing.
+    for processed_image in processed_images:
+      genai_client.files.delete(name=processed_image.genai_file_reference.name)
 
-  result_json = json.loads(result.text)
-  for pos, labeled_image in enumerate(result_json):
-    processed_images[pos].labeled_image = LabeledImage(**labeled_image)
-
-  # Delete the uploaded images from Gemini after processing.
-  for processed_image in processed_images:
-    processed_image.genai_file_reference.delete()
+  return response.text
 
 
 def write_result_to_bigquery(
@@ -211,9 +239,7 @@ def write_result_to_bigquery(
   """
   rows = []
   insertion_datetime = datetime.datetime.now(datetime.timezone.utc)
-  insertion_timestamp = insertion_datetime.strftime(
-      '%Y-%m-%d %H:%M:%S'
-  )  # Format: YYYY-MM-DD HH:MM:SS
+  insertion_timestamp = insertion_datetime.strftime('%Y-%m-%d %H:%M:%S')
 
   for processed_image in processed_images:
     row = {
@@ -221,7 +247,7 @@ def write_result_to_bigquery(
         for key, value in dataclasses.asdict(processed_image).items()
         if key not in ('genai_file_reference', 'labeled_image')
     }
-    row.update(dataclasses.asdict(processed_image.labeled_image))
+    row.update(processed_image.labeled_image)
     row['timestamp'] = insertion_timestamp
     rows.append(row)
   try:
@@ -249,13 +275,12 @@ def process_product(product: Product, table_id: str):
         if x is not None
     ]
     processed_images = [process_image(image_link) for image_link in image_links]
-    run_multimodal_query(product, processed_images)
+    gemini_response = run_multimodal_query(product, processed_images)
     write_result_to_bigquery(processed_images, table_id)
   except Exception:
     logging.error(
         '[FAILED] Error processing product ID %s',
         product.offer_id,
-        exec_info=True,
         extra={'json_fields': {'product': product.to_json()}},
     )
     raise
@@ -267,6 +292,7 @@ def process_product(product: Product, table_id: str):
           'json_fields': {
               'product': product.to_json(),
               'processed_images': [pi.to_json() for pi in processed_images],
+              'gemini_response': gemini_response,
           }
       },
   )

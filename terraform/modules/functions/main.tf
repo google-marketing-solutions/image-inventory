@@ -10,6 +10,7 @@ module "module_services" {
   activate_apis = [
     "cloudbuild.googleapis.com",
     "cloudfunctions.googleapis.com",
+    "generativelanguage.googleapis.com",
     "storage.googleapis.com",
     "run.googleapis.com",
   ]
