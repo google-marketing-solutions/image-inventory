@@ -71,7 +71,9 @@ Create a `variables.tfvars` file in the `terraform/` directory and provide the f
 | service_account       | Name of service account to create. This account will be used to run and manage the solution. ({service_account}@{project_name}.iam.gserviceaccount.com)| required            |
 | merchant_id    |  Merchant ID or Merchant Aggregator ID (MCA) to use. To find the unique identifier of your account, log into Merchant center and look for the number at the top-right corner of the page, above the account email address.| required            |
 | bigquery_dataset_id | Name of dataset to create in BigQuery where Merchant Center transfer table(s) and output will be stored, defaults to `image_inventory`  | optional            |
+| bigquery_table_name    | Name of dataset to create in BigQuery where output will be stored, defaults to `image_classifications`| optional            |
 | location         | [Google Cloud region](https://cloud.withgoogle.com/region-picker) to use, defaults to `us-central1` | optional            |
+| product_limit    | Number of products to push to tasks queue every time push_products is called, defaults to `100` | optional            |
 
 ### Deploy Image Inventory
 

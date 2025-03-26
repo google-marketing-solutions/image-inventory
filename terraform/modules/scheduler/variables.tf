@@ -16,6 +16,10 @@ variable "function_url" {
   type = string
 }
 
+variable "product_limit" {
+  type = number
+}
+
 variable "service_account_email" {
   type = string
 }

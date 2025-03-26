@@ -76,16 +76,13 @@ class ProcessedImage:
 
 # HTTP
 USER_AGENT = (  # Default requests user agent can cause 403 errors.
-    'Mozilla/5.0 (Linux; Android 6.0.1; Nexus 5X Build/MMB29P)'
-    ' AppleWebKit/537.36 (KHTML, like Gecko) Chrome/W.X.Y.Z Mobile'
-    ' Safari/537.36 (compatible; Googlebot/2.1;'
-    ' +http://www.google.com/bot.html)'
+    'Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible;'
+    ' GoogleOther) Chrome/W.X.Y.Z Safari/537.36'
 )
 http_session = requests.Session()
 # httpx (found in google.genai) has noisy logs, raise threshold to WARNING.
 logging.getLogger('httpx').setLevel(logging.WARNING)
 # Gemini
-MODEL_NAME = os.environ.get('MODEL_NAME', 'gemini-2.0-flash')
 genai_client = genai.Client()
 # BigQuery
 bigquery_client = bigquery.Client()
@@ -144,7 +141,7 @@ def process_image(image_link: str) -> ProcessedImage:
 
 
 def run_multimodal_query(
-    product: Product, processed_images: list[ProcessedImage]
+    product: Product, processed_images: list[ProcessedImage], model_name: str
 ) -> str:
   """Runs a multimodal query to Gemini to classify a set of images.
 
@@ -153,6 +150,7 @@ def run_multimodal_query(
   Args:
     product: the Product dataclass for the images to be processed
     processed_images: a list of ProcessedImage dataclasses to classify
+    model_name: the Gemini model to use
 
   Returns:
     the Gemini API response text
@@ -191,7 +189,7 @@ def run_multimodal_query(
   response = None
   try:
     response = genai_client.models.generate_content(
-        model=MODEL_NAME, contents=contents, config=config
+        model=model_name, contents=contents, config=config
     )
     labeled_images: list[LabeledImage] = response.parsed
 
@@ -258,12 +256,13 @@ def write_result_to_bigquery(
     raise BigQueryWriteError(e) from e
 
 
-def process_product(product: Product, table_id: str):
+def process_product(product: Product, table_id: str, model_name: str):
   """Processes product to extract relevant details locally & using Gemini.
 
   Args:
     product: the Product dataclass to process
     table_id: the BigQuery table to write results to
+    model_name: the Gemini model to use
 
   Returns:
     a list of ProcessedImage dataclasses
@@ -275,7 +274,9 @@ def process_product(product: Product, table_id: str):
         if x is not None
     ]
     processed_images = [process_image(image_link) for image_link in image_links]
-    gemini_response = run_multimodal_query(product, processed_images)
+    gemini_response = run_multimodal_query(
+        product, processed_images, model_name
+    )
     write_result_to_bigquery(processed_images, table_id)
   except Exception:
     logging.error(

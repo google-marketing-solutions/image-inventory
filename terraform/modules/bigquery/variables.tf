@@ -20,6 +20,10 @@ variable "bigquery_dataset_id" {
   type = string
 }
 
+variable "bigquery_table_name" {
+  type = string
+}
+
 variable "merchant_id" {
   type = string
 }

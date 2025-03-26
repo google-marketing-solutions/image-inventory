@@ -80,6 +80,7 @@ module "bigquery" {
   service_account_email         = google_service_account.service_account.email
   default_service_account_email = "service-${data.google_project.project.number}@gcp-sa-bigquerydatatransfer.iam.gserviceaccount.com"
   bigquery_dataset_id           = var.bigquery_dataset_id
+  bigquery_table_name           = var.bigquery_table_name
   merchant_id                   = var.merchant_id
 }
 
@@ -98,6 +99,8 @@ module "functions_classify_product" {
   environment_variables = {
     PROJECT_ID = data.google_project.project.name
     DATASET_ID = module.bigquery.dataset_id
+    TABLE_NAME = var.bigquery_table_name
+    MODEL_NAME = var.model_name
   }
   secret_environment_variables = {
     gemini_api_key = {
@@ -141,6 +144,7 @@ module "scheduler" {
   location              = var.location
   function_url          = module.functions_push_products.function_url
   service_account_email = google_service_account.service_account.email
+  product_limit         = var.product_limit
 }
 
 module "tasks" {

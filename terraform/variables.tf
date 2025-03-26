@@ -12,9 +12,24 @@ variable "merchant_id" {
   type = string
 }
 
+variable "model_name" {
+  type = string
+  default = "gemini-2.0-flash"
+}
+
 variable "bigquery_dataset_id" {
   type    = string
   default = "image_inventory"
+}
+
+variable "bigquery_table_name" {
+  type    = string
+  default = "image_classifications"
+}
+
+variable "product_limit" {
+  type    = number
+  default = 100
 }
 
 variable "location" {

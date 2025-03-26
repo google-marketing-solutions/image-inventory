@@ -27,8 +27,14 @@ logging_client = cloud_logging.Client()
 logging_client.setup_logging()
 
 # Global Initialization
-PROJECT_ID = os.environ.get('PROJECT_ID', 'Project ID env variable is not set.')
-DATASET_ID = os.environ.get('DATASET_ID', 'Dataset ID env variable is not set.')
+for env_var in ['PROJECT_ID', 'DATASET_ID', 'TABLE_NAME', 'MODEL_NAME']:
+  if os.environ.get(env_var) is None:
+    raise KeyError(f'{env_var} env variable is not set.')
+
+PROJECT_ID = os.environ['PROJECT_ID']
+DATASET_ID = os.environ['DATASET_ID']
+TABLE_NAME = os.environ['TABLE_NAME']
+MODEL_NAME = os.environ['MODEL_NAME']
 
 
 @functions_framework.http
@@ -48,7 +54,7 @@ def run(request) -> str:
   except (TypeError, ValueError) as e:
     return f'Bad Request: Invalid JSON format: {e}', 400
 
-  table_id = f'{PROJECT_ID}.{DATASET_ID}.image_classifications'
-  classify_product_lib.process_product(product, table_id)
+  table_id = f'{PROJECT_ID}.{DATASET_ID}.{TABLE_NAME}'
+  classify_product_lib.process_product(product, table_id, MODEL_NAME)
 
   return 'OK', 200

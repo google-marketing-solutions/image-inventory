@@ -69,6 +69,6 @@ data "external" "generate_table_schema" {
 resource "google_bigquery_table" "image_classifications" {
   dataset_id          = google_bigquery_dataset.dataset.dataset_id
   schema              = data.external.generate_table_schema.result.schema
-  table_id            = "image_classifications"
+  table_id            = var.bigquery_table_name
   deletion_protection = true # set to "true" in production
 }

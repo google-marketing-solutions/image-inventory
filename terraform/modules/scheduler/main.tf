@@ -31,7 +31,7 @@ resource "google_cloud_scheduler_job" "push_products" {
     # body needs to be encoded as bytes
     body = base64encode(<<EOT
       {
-        "product_limit": 100
+        "product_limit": ${var.product_limit}
       }
       EOT
     )
