@@ -34,7 +34,16 @@ for env_var in ['PROJECT_ID', 'DATASET_ID', 'TABLE_NAME', 'MODEL_NAME']:
 PROJECT_ID = os.environ['PROJECT_ID']
 DATASET_ID = os.environ['DATASET_ID']
 TABLE_NAME = os.environ['TABLE_NAME']
+TABLE_ID = f'{PROJECT_ID}.{DATASET_ID}.{TABLE_NAME}'
 MODEL_NAME = os.environ['MODEL_NAME']
+
+_PROMPT_FILE = os.path.join('config', 'prompt.txt')
+with open(_PROMPT_FILE, 'r', encoding='utf-8') as f:
+  PROMPT = f.read()
+
+product_classifier_cls = classify_product_lib.ProductClassifier(
+    PROMPT, MODEL_NAME, TABLE_ID
+)
 
 
 @functions_framework.http
@@ -54,7 +63,6 @@ def run(request) -> str:
   except (TypeError, ValueError) as e:
     return f'Bad Request: Invalid JSON format: {e}', 400
 
-  table_id = f'{PROJECT_ID}.{DATASET_ID}.{TABLE_NAME}'
-  classify_product_lib.process_product(product, table_id, MODEL_NAME)
+  product_classifier_cls.process_product(product)
 
   return 'OK', 200

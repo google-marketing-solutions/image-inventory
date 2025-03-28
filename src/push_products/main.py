@@ -42,24 +42,22 @@ def run(request):
   request_json = request.get_json(silent=True)
   product_limit = request_json.get('product_limit', 10)
 
-  products = push_products_lib.get_products(
-      project_id=PROJECT_ID, dataset_id=DATASET_ID, product_limit=product_limit
+  product_pusher = push_products_lib.ProductPusher(
+      project_id=PROJECT_ID,
+      dataset_id=DATASET_ID,
+      location=LOCATION,
+      queue_id=QUEUE_ID,
   )
+  products = product_pusher.get_products(product_limit=product_limit)
   if products:
     # To prevent duplicate tasks, do not push unless queue is empty.
-    if not push_products_lib.is_queue_empty(
-        project_id=PROJECT_ID, location=LOCATION, queue_id=QUEUE_ID
-    ):
+    if not product_pusher.is_queue_empty():
       raise push_products_lib.CloudTasksQueueNotEmptyError(
           'Queue is not empty!'
       )
     logging.info('Found %d new products to push', len(products))
-    push_products_lib.push_products(
-        products=products,
-        cloud_function_url=CLOUD_FUNCTION_URL,
-        project_id=PROJECT_ID,
-        location=LOCATION,
-        queue_id=QUEUE_ID,
+    product_pusher.push_products(
+        products=products, cloud_function_url=CLOUD_FUNCTION_URL
     )
   else:
     logging.info('No new products found, exiting...')

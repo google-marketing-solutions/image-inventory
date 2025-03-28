@@ -20,7 +20,7 @@ import hashlib
 import io
 import json
 import logging
-import os
+from typing import Optional
 
 from config.structured_output import LabeledImage
 from google import genai
@@ -65,7 +65,7 @@ class ProcessedImage:
   width: int
   height: int
   sha256_hash: str
-  labeled_image: LabeledImage = dataclasses.field(init=False)
+  labeled_image: Optional[LabeledImage] = None
 
   def to_json(self) -> str:
     """Returns a JSON string representation of the ProcessedImage."""
@@ -74,226 +74,232 @@ class ProcessedImage:
     return json.dumps(data_dict)
 
 
-# HTTP
 USER_AGENT = (  # Default requests user agent can cause 403 errors.
     'Mozilla/5.0 AppleWebKit/537.36 (KHTML, like Gecko; compatible;'
     ' GoogleOther) Chrome/W.X.Y.Z Safari/537.36'
 )
-http_session = requests.Session()
 # httpx (found in google.genai) has noisy logs, raise threshold to WARNING.
 logging.getLogger('httpx').setLevel(logging.WARNING)
-# Gemini
-genai_client = genai.Client()
-# BigQuery
-bigquery_client = bigquery.Client()
-
-_PROMPT_FILE = os.path.join('config', 'prompt.txt')
-with open(_PROMPT_FILE, 'r', encoding='utf-8') as f:
-  _PROMPT = f.read()
 
 
-def process_image(image_link: str) -> ProcessedImage:
-  """Processes an image link to extract relevant details & upload to Gemini.
+class ProductClassifier:
+  """Product classifier class."""
 
-  Args:
-    image_link: the image link to process
+  def __init__(self, prompt: str, model_name: str, table_id: str):
+    """Initializes the ProductClassifier.
 
-  Returns:
-    a populated ProcessedImage dataclass (except for type)
+    Args:
+      prompt: the generative prompt to use
+      model_name: the Gemini model to use
+      table_id: the BigQuery table to write results to
+    """
+    self.prompt = prompt
+    self.model_name = model_name
+    self.table_id = table_id
 
-  Raises:
-    ImagePullError: if the image cannot be downloaded from the link
-    GenerativeAIError: if the image cannot be uploaded to Gemini
-  """
-  # Download image from link
-  headers = {'User-Agent': USER_AGENT} if USER_AGENT else {}
-  try:
-    response = http_session.get(image_link, headers=headers)
-    response.raise_for_status()
-    response_content = response.content
-    mime_type = response.headers.get('content-type')
-  except Exception as e:
-    raise ImagePullError(e) from e
+    self.http_session = requests.Session()
+    self.bigquery_client = bigquery.Client()
+    self.genai_client = genai.Client()
 
-  # Upload image to Gemini for multimodal query.
-  try:
-    genai_file_reference = genai_client.files.upload(
-        file=io.BytesIO(response_content), config={'mime_type': mime_type}
-    )
-  except Exception as e:
-    raise GenerativeAIError(e) from e
+    self.http_headers = {'User-Agent': USER_AGENT} if USER_AGENT else {}
 
-  # Process image attributes locally
-  sha256_hash = hashlib.sha256(response_content).hexdigest()
-  image_obj = Image.open(io.BytesIO(response_content))
-  width, height = image_obj.size
-  # Release memory by deleting image object.
-  del image_obj
-
-  return ProcessedImage(
-      image_link=image_link,
-      genai_file_reference=genai_file_reference,
-      mime_type=mime_type,
-      width=width,
-      height=height,
-      sha256_hash=sha256_hash,
-  )
-
-
-def run_multimodal_query(
-    product: Product, processed_images: list[ProcessedImage], model_name: str
-) -> str:
-  """Runs a multimodal query to Gemini to classify a set of images.
-
-  The LabeledImage class is written back to the ProcessedImage dataclass.
-
-  Args:
-    product: the Product dataclass for the images to be processed
-    processed_images: a list of ProcessedImage dataclasses to classify
-    model_name: the Gemini model to use
-
-  Returns:
-    the Gemini API response text
-
-  Raises:
-    GenerativeAIError: if the Gemini query fails
-  """
-  prompt = []
-
-  # Adding image indexes to the prompt to match the output with the images.
-  # https://cloud.google.com/vertex-ai/generative-ai/docs/multimodal/image-understanding#best-practices
-  image_ids = ['image ' + str(i + 1) for i in range(len(processed_images))]
-  prompt.extend(image_ids)
-  prompt.append(_PROMPT)
-  if product.title is not None:
-    prompt.append(f'The product showcased by the images is: {product.title}')
-  if product.product_type is not None:
-    prompt.append(
-        'The category of the product shown in the images is:'
-        f' {product.product_type}'
+    self.genai_config = types.GenerateContentConfig(
+        response_mime_type='application/json',
+        response_schema=list[LabeledImage],
+        automatic_function_calling=types.AutomaticFunctionCallingConfig(
+            disable=True
+        ),
+        top_k=1,
+        top_p=0.2,
     )
 
-  # Join the uploaded image references and prompt strings together.
-  text_prompt = '\n'.join(prompt)
-  contents = [i.genai_file_reference for i in processed_images] + [text_prompt]
-  config = types.GenerateContentConfig(
-      response_mime_type='application/json',
-      response_schema=list[LabeledImage],
-      automatic_function_calling=types.AutomaticFunctionCallingConfig(
-          disable=True
-      ),
-      top_k=1,
-      top_p=0.2,
-  )
+  def process_image(self, image_link: str) -> ProcessedImage:
+    """Processes an image link to extract relevant details & upload to Gemini.
 
-  response = None
-  try:
-    response = genai_client.models.generate_content(
-        model=model_name, contents=contents, config=config
-    )
-    labeled_images: list[LabeledImage] = response.parsed
+    Args:
+      image_link: the image link to process
 
-    if len(labeled_images) != len(processed_images):
-      raise ValueError(
-          'Gemini response length does not match number of images to be'
-          ' classified.'
+    Returns:
+      a populated ProcessedImage dataclass (except for LabeledImage value)
+
+    Raises:
+      ImagePullError: if the image cannot be downloaded from the link
+      GenerativeAIError: if the image cannot be uploaded to Gemini
+    """
+    # Download image from link
+    try:
+      response = self.http_session.get(image_link, headers=self.http_headers)
+      response.raise_for_status()
+      response_content = response.content
+      mime_type = response.headers.get('content-type')
+    except Exception as e:
+      raise ImagePullError(e) from e
+
+    # Upload image to Gemini for multimodal query.
+    image_file = io.BytesIO(response_content)
+    try:
+      genai_file_reference = self.genai_client.files.upload(
+          file=image_file, config={'mime_type': mime_type}
       )
-    for pos, labeled_image in enumerate(labeled_images):
-      processed_images[pos].labeled_image = labeled_image
-  except Exception as e:
-    logging.warning(
-        '[ERROR] Detected error when processing Gemini response for product'
-        ' ID %s',
+    except Exception as e:
+      raise GenerativeAIError(e) from e
+
+    # Process image attributes locally
+    sha256_hash = hashlib.sha256(response_content).hexdigest()
+    image_obj = Image.open(image_file)
+    width, height = image_obj.size
+    # Release memory by deleting image object.
+    del image_obj, image_file
+
+    return ProcessedImage(
+        image_link=image_link,
+        genai_file_reference=genai_file_reference,
+        mime_type=mime_type,
+        width=width,
+        height=height,
+        sha256_hash=sha256_hash,
+    )
+
+  def run_multimodal_query(
+      self,
+      product: Product,
+      processed_images: list[ProcessedImage],
+  ) -> str:
+    """Runs a multimodal query via Gemini to classify a set of images.
+
+    The LabeledImage class is written back to the ProcessedImage dataclass.
+
+    Args:
+      product: the Product dataclass for the images to be processed
+      processed_images: a list of ProcessedImage dataclasses to classify
+
+    Returns:
+      the Gemini API response text
+
+    Raises:
+      GenerativeAIError: if the Gemini query fails
+    """
+    prompt = []
+
+    # Adding image indexes to the prompt to match the output with the images.
+    # https://cloud.google.com/vertex-ai/generative-ai/docs/multimodal/image-understanding#best-practices
+    image_ids = ['image ' + str(i + 1) for i in range(len(processed_images))]
+    prompt.extend(image_ids)
+    prompt.append(self.prompt)
+    if product.title is not None:
+      prompt.append(f'The product showcased by the images is: {product.title}')
+    if product.product_type is not None:
+      prompt.append(
+          'The category of the product shown in the images is:'
+          f' {product.product_type}'
+      )
+
+    # Join the uploaded image references and prompt strings together.
+    text_prompt = '\n'.join(prompt)
+    contents = [i.genai_file_reference for i in processed_images] + [
+        text_prompt
+    ]
+
+    response = None
+    try:
+      response = self.genai_client.models.generate_content(
+          model=self.model_name, contents=contents, config=self.genai_config
+      )
+      labeled_images: list[LabeledImage] = response.parsed
+
+      if len(labeled_images) != len(processed_images):
+        raise ValueError(
+            'Gemini response length does not match number of images to be'
+            ' classified.'
+        )
+      for pos, labeled_image in enumerate(labeled_images):
+        processed_images[pos].labeled_image = labeled_image
+    except Exception as e:
+      logging.warning(
+          '[ERROR] Detected error when processing Gemini response for product'
+          ' ID %s',
+          product.offer_id,
+          extra={
+              'json_fields': {
+                  'product': product.to_json(),
+                  'gemini_text_prompt': text_prompt,
+                  'gemini_response': response.text if response else None,
+                  'processed_images': [pi.to_json() for pi in processed_images],
+              }
+          },
+      )
+      raise GenerativeAIError(e) from e
+    finally:
+      # Delete the uploaded images from Gemini after processing.
+      for processed_image in processed_images:
+        self.genai_client.files.delete(
+            name=processed_image.genai_file_reference.name
+        )
+
+    return response.text
+
+  def write_result_to_bigquery(self, processed_images: list[ProcessedImage]):
+    """Writes results to BigQuery.
+
+    Args:
+      processed_images: a list of ProcessedImage dataclasses to write rows for.
+
+    Raises:
+      BigQueryWriteError: if the BigQuery write fails
+    """
+    rows = []
+    insertion_datetime = datetime.datetime.now(datetime.timezone.utc)
+    insertion_timestamp = insertion_datetime.strftime('%Y-%m-%d %H:%M:%S')
+
+    for processed_image in processed_images:
+      row = {
+          key: value
+          for key, value in dataclasses.asdict(processed_image).items()
+          if key not in ('genai_file_reference', 'labeled_image')
+      }
+      row.update(processed_image.labeled_image)
+      row['timestamp'] = insertion_timestamp
+      rows.append(row)
+    try:
+      errors = self.bigquery_client.insert_rows_json(self.table_id, rows)
+      if errors:
+        raise BigQueryWriteError(errors)
+    except Exception as e:
+      raise BigQueryWriteError(e) from e
+
+  def process_product(self, product: Product):
+    """Processes product to extract relevant details locally & using Gemini.
+
+    Args:
+      product: the Product dataclass to process
+    """
+    try:
+      image_links = [
+          x
+          for x in [product.image_link] + product.additional_image_links
+          if x is not None
+      ]
+      processed_images = [
+          self.process_image(image_link) for image_link in image_links
+      ]
+      gemini_response = self.run_multimodal_query(product, processed_images)
+      self.write_result_to_bigquery(processed_images)
+    except Exception:
+      logging.error(
+          '[FAILED] Error processing product ID %s',
+          product.offer_id,
+          extra={'json_fields': {'product': product.to_json()}},
+      )
+      raise
+
+    logging.info(
+        '[COMPLETED] Finished processing product ID %s',
         product.offer_id,
         extra={
             'json_fields': {
                 'product': product.to_json(),
-                'gemini_text_prompt': text_prompt,
-                'gemini_response': response.text if response else None,
                 'processed_images': [pi.to_json() for pi in processed_images],
+                'gemini_response': gemini_response,
             }
         },
     )
-    raise GenerativeAIError(e) from e
-  finally:
-    # Delete the uploaded images from Gemini after processing.
-    for processed_image in processed_images:
-      genai_client.files.delete(name=processed_image.genai_file_reference.name)
-
-  return response.text
-
-
-def write_result_to_bigquery(
-    processed_images: list[ProcessedImage], table_id: str
-):
-  """Writes results to BigQuery.
-
-  Args:
-    processed_images: a list of ProcessedImage dataclasses to write rows for.
-    table_id: the BigQuery table to write results to
-
-  Raises:
-    BigQueryWriteError: if the BigQuery write fails
-  """
-  rows = []
-  insertion_datetime = datetime.datetime.now(datetime.timezone.utc)
-  insertion_timestamp = insertion_datetime.strftime('%Y-%m-%d %H:%M:%S')
-
-  for processed_image in processed_images:
-    row = {
-        key: value
-        for key, value in dataclasses.asdict(processed_image).items()
-        if key not in ('genai_file_reference', 'labeled_image')
-    }
-    row.update(processed_image.labeled_image)
-    row['timestamp'] = insertion_timestamp
-    rows.append(row)
-  try:
-    errors = bigquery_client.insert_rows_json(table_id, rows)
-    if errors:
-      raise BigQueryWriteError(errors)
-  except Exception as e:
-    raise BigQueryWriteError(e) from e
-
-
-def process_product(product: Product, table_id: str, model_name: str):
-  """Processes product to extract relevant details locally & using Gemini.
-
-  Args:
-    product: the Product dataclass to process
-    table_id: the BigQuery table to write results to
-    model_name: the Gemini model to use
-
-  Returns:
-    a list of ProcessedImage dataclasses
-  """
-  try:
-    image_links = [
-        x
-        for x in [product.image_link] + product.additional_image_links
-        if x is not None
-    ]
-    processed_images = [process_image(image_link) for image_link in image_links]
-    gemini_response = run_multimodal_query(
-        product, processed_images, model_name
-    )
-    write_result_to_bigquery(processed_images, table_id)
-  except Exception:
-    logging.error(
-        '[FAILED] Error processing product ID %s',
-        product.offer_id,
-        extra={'json_fields': {'product': product.to_json()}},
-    )
-    raise
-
-  logging.info(
-      '[COMPLETED] Finished processing product ID %s',
-      product.offer_id,
-      extra={
-          'json_fields': {
-              'product': product.to_json(),
-              'processed_images': [pi.to_json() for pi in processed_images],
-              'gemini_response': gemini_response,
-          }
-      },
-  )
