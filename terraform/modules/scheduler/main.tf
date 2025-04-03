@@ -20,6 +20,7 @@ resource "google_cloud_scheduler_job" "push_products" {
   schedule         = var.schedule # defaults to "0 * * * *" # Hourly
   time_zone        = "America/New_York"
   attempt_deadline = "300s"
+  paused           = true
 
   retry_config {
     retry_count = 1

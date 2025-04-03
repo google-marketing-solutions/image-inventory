@@ -16,6 +16,21 @@ This solution is designed for easy customization, enabling users to adapt it to 
 * **BigQuery Data Storage:** Stores both product data and classification results in BigQuery, providing a centralized repository for analysis.
 * **Structured Output:** Enforces structured output to constrain Gemini's generative results, ensuring data consistency and simplifying downstream processing.
 
+## Solution Design
+
+![A diagram describing the solution design](assets/solution_architecture.png)
+
+1. On a scheduled basis (every hour by default), the **Push Products** function executes:
+   1. Queries **`get_new_products_view`** to get list of unprocessed product images
+      1. The view returns the set of product image URLs present in Products_XXX (from the Merchant Center Transfer) and not present in image_classifications (where the solution outputs the classifications)
+   2. Pushes new products to the **`classify_products_queue`** in Cloud Tasks
+2. Cloud Tasks orchestrates a call to the **Classify Product** function for each product.
+3. The **Classify Product** function executes:
+   1. Makes HTTP requests to download images from their URLs
+   2. Determines image metadata (mime_type, size, and sha256_hash)
+   3. Executes multimodal query on Gemini using the prompt & downloaded images as context
+   4. Writes returned Gemini classification values & image metadata to BigQuery
+
 ## **Installation**
 
 This section outlines the steps to install and configure Image Inventory.
@@ -57,7 +72,7 @@ Image Inventory uses [Terraform](https://developer.hashicorp.com/terraform/tutor
 
 #### **Service Account**
 
-The solution will use a service account with the following permissions:
+The solution will create a service account with the following permissions:
 
 * roles/bigquery.dataOwner
 * roles/bigquery.jobUser
@@ -69,9 +84,6 @@ The solution will use a service account with the following permissions:
 * roles/run.invoker
 * roles/secretmanager.viewer
 * roles/storage.objectViewer
-
-[!NOTE]
-This installer uses Terraform to define all resources required to set up Image Inventory on Google Cloud Platform.
 
 ### **Installation Steps**
 
@@ -108,18 +120,21 @@ The config/structured_output.py file defines the LabeledImage Python class, whic
 
 * The following data types are allowed in LabeledImage: str, enum.Enum, int, float, bool, list[AllowedType] (where AllowedType is one of the other allowed types).
 
-* During terraform apply, the python helper function generate_table_schema.py uses the LabeledImage class to generate the schema for the image_classifications output table in BigQuery.
-[!NOTE]
-If you update this class after deploying, you will need to manually delete the generated output table and rerun terraform apply.
+* During ```terraform apply```, the python helper function generate_table_schema.py uses the LabeledImage class to generate the schema for the image_classifications output table in BigQuery.
 
-#### **3. Enable APIs in your Google Cloud Project**
+>[!WARNING]
+>If you update this class after deploying, you will need to manually delete the generated output table and rerun ```terraform apply```.
+
+#### **3. Enable APIs & Access in your Google Cloud Project**
 
 Before deploying, ensure the following APIs are enabled in your Google Cloud project:
 
 * [Cloud Resource Manager API](https://console.cloud.google.com/apis/library/cloudresourcemanager.googleapis.com) (cloudresourcemanager.googleapis.com)
-* [Service Usage API](https://console.cloud.google.com/apis/library/cloudresourcemanager.googleapis.com) (serviceusage.googleapis.com)
+* [Service Usage API](https://console.cloud.google.com/apis/library/serviceusage.googleapis.com) (serviceusage.googleapis.com)
 
 All other APIs will be enabled automatically by Terraform.
+
+If you are running Terraform as a human user, ensure they have the appropriate BigQuery role (either bigquery.dataOwner or bigquery.dataEditor). If you can't apply this role with project-level access, then complete the instructions until the solution dataset is created (and TF fails), then grant dataset-level access manually and rerun Terraform.
 
 #### **4. Provide Values for Variables**
 
@@ -132,6 +147,7 @@ Create a variables.tfvars file in the terraform/ directory and provide the follo
 | merchant_id | Merchant ID or Merchant Aggregator ID (MCA) to use. To find your Merchant Center identifier, log into Merchant Center and look for the number at the top-right corner of the page, above your account email address. | required |  |
 | bigquery_dataset_id | Name of the dataset to create in BigQuery where Merchant Center transfer table(s) and output will be stored. | optional | image_inventory |
 | bigquery_table_name | Name of the table to create in BigQuery where output will be stored. | optional | image_classifications |
+| model_name | [Gemini model variant](https://ai.google.dev/gemini-api/docs/models#model-variations) to use | optional | gemini-2.0-flash |
 | location | [Google Cloud region](https://cloud.withgoogle.com/region-picker) to use. | optional | us-central1 |
 | product_limit | Number of products to process per batch. | optional | 100 |
 
@@ -151,6 +167,17 @@ product_limit = 50
 
 To deploy Image Inventory using Terraform, run the following commands:
 
+> [!WARNING]
+> If you are running Terraform using Cloud Shell, you may need to update Terraform to at least v1.11
+>
+> Follow the [instructions](https://developer.hashicorp.com/terraform/install#linux) (or run this command from the docs below in your terminal.)
+>
+> ```
+> wget -O - <https://apt.releases.hashicorp.com/gpg> | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+> echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
+> sudo apt update && sudo apt install terraform
+> ```
+
 First, initialize the Terraform configuration:
 
 ```terraform init```
@@ -162,13 +189,22 @@ Then, apply the Terraform configuration. This will display the changes to be app
 Type yes and press Enter to confirm the deployment.
 
 > [!IMPORTANT]
-> If this is your first time using the Merchant Center Transfer, your terraform apply might fail with a "table not found" error. It can take up to 24 hours for the Merchant Center transfer table to become available. Once the transfer succeeds and the table exists in BigQuery, run the apply command again.
+> Terraform will try to set up the Merchant Center Transfer using the credentials of the newly created service account. In order to get the transfer to succeed, you will need to either
+>
+> * Grant the service account with "Performance and insights" access in Merchant Center.
+> * Replace the service account with your human user who has access to Merchant Center.
+>   * Go to BigQuery > Data Transfers > merchant_center_transfer > Configuration
+>   * Click "Update Credentials"
+>
+> If this is your first time using the Merchant Center Transfer, your ```terraform apply``` might fail with a "table not found" error. It can take up to 24 hours for the Merchant Center transfer table to become available. Once the transfer succeeds and the table exists in BigQuery, run the apply command again.
+
+Lastly, you will need to enable the newly-created Cloud Scheduler job. Terraform sets the job to PAUSED to prevent the solution from running inadvertently. You can also force a manual run of the job to check if everything is working as expected; look at Cloud Logging or the output BQ table.
 
 ## **Destroy Deployed Resources**
 
 To remove all Image Inventory resources from your Google Cloud project, run the following command from the terraform/ directory:
 
-terraform destroy -var-file=variables.tfvars
+```terraform destroy -var-file=variables.tfvars```
 
 Type yes and press Enter to confirm the deletion of all deployed resources.
 
