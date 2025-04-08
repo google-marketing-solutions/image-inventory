@@ -25,6 +25,7 @@ WITH
       merchant_id,
       aggregator_id,
       title,
+      brand,
       product_type,
       image_link
     FROM
@@ -37,7 +38,7 @@ WITH
           LatestDate
       )
       AND image_link NOT IN (
-        SELECT DISTINCT image_link FROM `${PROJECT_ID}.${DATASET_ID}.image_classifications`
+        SELECT DISTINCT image_link FROM `${PROJECT_ID}.${DATASET_ID}.${TABLE_NAME}`
       )
   ),
   AdditionalImages AS (
@@ -47,6 +48,7 @@ WITH
       aggregator_id,
       title,
       product_type,
+      brand,
       additional_image_link
     FROM
       `${PROJECT_ID}.${DATASET_ID}.Products_${MERCHANT_ID}` AS P,
@@ -59,7 +61,7 @@ WITH
           LatestDate
       )
       AND additional_image_link NOT IN (
-        SELECT DISTINCT image_link FROM `${PROJECT_ID}.${DATASET_ID}.image_classifications`
+        SELECT DISTINCT image_link FROM `${PROJECT_ID}.${DATASET_ID}.${TABLE_NAME}`
       )
   ),
   ImageLinks AS (
@@ -69,6 +71,7 @@ WITH
       aggregator_id,
       IFNULL(MI.title, AI.title) AS title,
       IFNULL(MI.product_type, AI.product_type) AS product_type,
+      IFNULL(MI.brand, AI.brand) AS brand,
       MI.image_link,
       ARRAY_AGG(AI.additional_image_link IGNORE NULLS) AS additional_image_links
     FROM
@@ -76,6 +79,6 @@ WITH
     FULL OUTER JOIN
       AdditionalImages AS AI
       USING (offer_id, merchant_id, aggregator_id)
-    GROUP BY 1, 2, 3, 4, 5, 6
+    GROUP BY 1, 2, 3, 4, 5, 6, 7
   )
 SELECT * FROM ImageLinks

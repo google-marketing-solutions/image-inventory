@@ -48,7 +48,9 @@ def run(request):
       location=LOCATION,
       queue_id=QUEUE_ID,
   )
-  products = product_pusher.get_products(product_limit=product_limit)
+  products = product_pusher.get_new_products_from_view(
+      product_limit=product_limit
+  )
   if products:
     # To prevent duplicate tasks, do not push unless queue is empty.
     if not product_pusher.is_queue_empty():

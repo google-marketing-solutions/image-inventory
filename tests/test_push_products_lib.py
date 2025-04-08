@@ -44,6 +44,7 @@ class TestProductPusher(unittest.TestCase):
         aggregator_id=101,
         title='Offer 1',
         product_type='Product A',
+        brand='Brand A',
         image_link='http://image1.com',
         additional_image_links=['http://image2.com'],
     )
@@ -53,6 +54,7 @@ class TestProductPusher(unittest.TestCase):
         aggregator_id=102,
         title='Offer 2',
         product_type='Product B',
+        brand='Brand B',
         image_link='http://image3.com',
         additional_image_links=[],
     )
@@ -106,8 +108,8 @@ class TestProductPusher(unittest.TestCase):
         request=tasks_v2.ListTasksRequest(parent=mock_queue_path)
     )
 
-  def test_get_products_success(self):
-    """Test get_products function with successful BigQuery read."""
+  def test_get_new_products_from_view_success(self):
+    """Test get_new_products_from_view function with successful BigQuery read."""
     mock_rows = [
         {
             'offer_id': 'offer1',
@@ -115,6 +117,7 @@ class TestProductPusher(unittest.TestCase):
             'aggregator_id': 101,
             'title': 'Offer 1',
             'product_type': 'Product A',
+            'brand': 'Brand A',
             'image_link': 'http://image1.com',
             'additional_image_links': ['http://image2.com'],
         },
@@ -124,6 +127,7 @@ class TestProductPusher(unittest.TestCase):
             'aggregator_id': 102,
             'title': 'Offer 2',
             'product_type': 'Product B',
+            'brand': 'Brand B',
             'image_link': 'http://image3.com',
             'additional_image_links': [],
         },
@@ -134,22 +138,88 @@ class TestProductPusher(unittest.TestCase):
         'product_limit': 2,
     }
 
+    mock_product_filter = mock.MagicMock()
+    mock_product_filter.get_sql_filter.return_value = 'MOCK SQL FILTER STR'
+
     self.mock_bigquery_client.query.return_value.result.return_value = mock_rows
 
-    products = self.product_pusher.get_products(product_limit=2)
+    products = self.product_pusher.get_new_products_from_view(
+        product_limit=2, product_filter=mock_product_filter
+    )
 
     call_args = self.mock_bigquery_client.query.call_args
     query = call_args[0][0]
     self.mock_bigquery_client.query.assert_called_once()
-    self.assertIn('FROM {project_id}.{dataset_id}'.format(**params), query)
+    mock_product_filter.get_sql_filter.assert_called_once()
+    self.assertIn(
+        'FROM {project_id}.{dataset_id}.get_new_products_view'.format(**params),
+        query,
+    )
+    self.assertIn('LIMIT {product_limit}'.format(**params), query)
+    self.assertIn('WHERE MOCK SQL FILTER STR', query)
+    self.assertEqual(products, [self.product1, self.product2])
+
+  def test_get_new_products_bigquery_error(self):
+    """Test get_new_products_from_view function with BigQuery read error."""
+    self.mock_bigquery_client.query.side_effect = Exception('BigQuery error')
+    with self.assertRaises(push_products_lib.BigQueryReadError):
+      self.product_pusher.get_new_products_from_view(product_limit=2)
+
+  def test_get_all_products_from_view_success(self):
+    """Test get_products function with successful BigQuery read."""
+    mock_rows = [
+        {
+            'offer_id': 'offer1',
+            'merchant_id': 1,
+            'aggregator_id': 101,
+            'title': 'Offer 1',
+            'product_type': 'Product A',
+            'brand': 'Brand A',
+            'image_link': 'http://image1.com',
+            'additional_image_links': ['http://image2.com'],
+        },
+        {
+            'offer_id': 'offer2',
+            'merchant_id': 2,
+            'aggregator_id': 102,
+            'title': 'Offer 2',
+            'product_type': 'Product B',
+            'brand': 'Brand B',
+            'image_link': 'http://image3.com',
+            'additional_image_links': [],
+        },
+    ]
+    params = {
+        'project_id': self.mock_project_id,
+        'dataset_id': self.mock_dataset_id,
+        'product_limit': 2,
+    }
+    mock_product_filter = mock.MagicMock()
+    mock_product_filter.get_sql_filter.return_value = 'MOCK SQL FILTER STR'
+
+    self.mock_bigquery_client.query.return_value.result.return_value = mock_rows
+
+    products = self.product_pusher.get_all_products_from_view(
+        product_limit=2, product_filter=mock_product_filter
+    )
+
+    call_args = self.mock_bigquery_client.query.call_args
+    query = call_args[0][0]
+    self.mock_bigquery_client.query.assert_called_once()
+    mock_product_filter.get_sql_filter.assert_called_once()
+    self.assertIn(
+        'FROM {project_id}.{dataset_id}.get_all_products_view'.format(**params),
+        query,
+    )
+    self.assertIn('WHERE MOCK SQL FILTER STR', query)
     self.assertIn('LIMIT {product_limit}'.format(**params), query)
     self.assertEqual(products, [self.product1, self.product2])
 
-  def test_get_products_bigquery_error(self):
+  def test_get_all_products_bigquery_error(self):
     """Test get_products function with BigQuery read error."""
     self.mock_bigquery_client.query.side_effect = Exception('BigQuery error')
     with self.assertRaises(push_products_lib.BigQueryReadError):
-      self.product_pusher.get_products(product_limit=2)
+      self.product_pusher.get_all_products_from_view(product_limit=2)
 
   def test_push_products_success(self):
     """Test push_products function with successful Cloud Tasks publish."""

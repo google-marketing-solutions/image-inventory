@@ -17,10 +17,19 @@
 import dataclasses
 import json
 import logging
+from typing import Optional
 
 from google.cloud import bigquery
 from google.cloud import tasks_v2
-from shared.common import Product
+
+try:
+  from shared import common  # pylint: disable=g-import-not-at-top
+except ImportError:
+  # This handles cases when code is not deployed using Terraform
+  from ..shared import common  # pylint: disable=g-import-not-at-top, relative-beyond-top-level
+
+Product = common.Product
+ProductFilter = common.ProductFilter
 
 
 class Error(Exception):
@@ -49,13 +58,21 @@ class ProductPusher:
       location: str,
       queue_id: str,
   ):
-    self.bigquery_client = bigquery.Client()
-    self.tasks_client = tasks_v2.CloudTasksClient()
+    """Initialize instance of ProductPusher.
 
+    Args:
+      project_id: The Google Cloud project ID.
+      dataset_id: The BigQuery dataset ID.
+      location: The Google Cloud location.
+      queue_id: The Cloud Tasks queue ID.
+    """
     self.project_id = project_id
     self.dataset_id = dataset_id
     self.location = location
     self.queue_id = queue_id
+
+    self.bigquery_client = bigquery.Client(self.project_id)
+    self.tasks_client = tasks_v2.CloudTasksClient()
 
   def is_queue_empty(self) -> bool:
     """Checks if the Google Cloud Tasks queue is empty.
@@ -72,15 +89,25 @@ class ProductPusher:
     # Check if the queue is empty
     return not bool(list(response.tasks))
 
-  def get_products(self, product_limit: int = 10) -> list[Product]:
-    """Retrieves set of products & their images to classify.
+  def get_all_products_from_view(
+      self,
+      product_limit: int = 10,
+      product_filter: Optional[ProductFilter] = None,
+  ) -> list[Product]:
+    """Retrieves set of products & their images from feed to classify.
+
+    This is used when Image Inventory is run on an ad-hoc basis, identifying
+    all products to classify based on the Products_X table and product_filter.
 
     Args:
       product_limit (int): Maximum number of products to retrieve
+      product_filter (Optional[ProductFilter]): A ProductFilter dataclass
 
     Returns:
       a list of Product dataclasses
     """
+
+    sql_filter = product_filter.get_sql_filter() if product_filter else 'TRUE'
     query = (
         'SELECT'
         '   offer_id,'
@@ -88,9 +115,51 @@ class ProductPusher:
         '   aggregator_id,'
         '   title,'
         '   product_type,'
+        '   brand,'
+        '   image_link,'
+        '   additional_image_links'
+        f' FROM {self.project_id}.{self.dataset_id}.get_all_products_view'
+        f' WHERE {sql_filter}'
+        f' LIMIT {product_limit}'
+    )
+    try:
+      query_job = self.bigquery_client.query(query)
+      rows = query_job.result()
+    except Exception as e:  # pylint: disable=broad-exception-caught
+      raise BigQueryReadError(e) from e
+    products = [Product(**row) for row in rows]
+    return products
+
+  def get_new_products_from_view(
+      self,
+      product_limit: int = 10,
+      product_filter: Optional[ProductFilter] = None,
+  ) -> list[Product]:
+    """Retrieves set of new unprocessed products & their images to classify.
+
+    This is used when Image Inventory is scheduled & running for the full feed,
+    identifying new products to classify based on the get_new_products_view.
+
+    Args:
+      product_limit (int): Maximum number of products to retrieve
+      product_filter (Optional[ProductFilter]): A ProductFilter dataclass
+
+    Returns:
+      a list of Product dataclasses
+    """
+    sql_filter = product_filter.get_sql_filter() if product_filter else 'TRUE'
+    query = (
+        'SELECT'
+        '   offer_id,'
+        '   merchant_id,'
+        '   aggregator_id,'
+        '   title,'
+        '   product_type,'
+        '   brand,'
         '   image_link,'
         '   additional_image_links'
         f' FROM {self.project_id}.{self.dataset_id}.get_new_products_view'
+        f' WHERE {sql_filter}'
         f' LIMIT {product_limit}'
     )
     try:

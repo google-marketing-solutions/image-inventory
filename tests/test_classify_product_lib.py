@@ -52,6 +52,7 @@ class TestClassifyProductLib(unittest.TestCase):
         aggregator_id=101,
         title='Offer 1',
         product_type='Product A',
+        brand='Brand A',
         image_link='http://image1.com',
         additional_image_links=['http://image2.com'],
     )

@@ -56,10 +56,48 @@ resource "google_bigquery_table" "get_new_products" {
         PROJECT_ID  = var.project_id,
         DATASET_ID  = google_bigquery_dataset.dataset.dataset_id,
         MERCHANT_ID = var.merchant_id,
+        TABLE_NAME  = google_bigquery_table.image_classifications.table_id
       }
     )
     use_legacy_sql = false
   }
+}
+
+resource "google_bigquery_table" "get_all_products" {
+  dataset_id          = google_bigquery_dataset.dataset.dataset_id
+  table_id            = "get_all_products_view"
+  deletion_protection = true # set to "true" in production
+
+  view {
+    query = templatefile(
+      "${path.module}/templates/get_all_products.tftpl",
+      {
+        PROJECT_ID  = var.project_id,
+        DATASET_ID  = google_bigquery_dataset.dataset.dataset_id,
+        MERCHANT_ID = var.merchant_id,
+      }
+    )
+    use_legacy_sql = false
+  }
+}
+
+resource "google_bigquery_table" "get_product_image_classifications" {
+  dataset_id          = google_bigquery_dataset.dataset.dataset_id
+  table_id            = "get_product_image_classifications"
+  deletion_protection = true # set to "true" in production
+
+  view {
+    query = templatefile(
+      "${path.module}/templates/get_product_image_classifications.tftpl",
+      {
+        PROJECT_ID  = var.project_id,
+        DATASET_ID  = google_bigquery_dataset.dataset.dataset_id,
+        TABLE_NAME  = google_bigquery_table.image_classifications.table_id
+      }
+    )
+    use_legacy_sql = false
+  }
+  depends_on = [ google_bigquery_table.get_all_products ]
 }
 
 data "external" "generate_table_schema" {

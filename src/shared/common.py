@@ -19,6 +19,14 @@ import json
 from typing import Optional
 
 
+class Error(Exception):
+  """Generic Error class for module."""
+
+
+class ProductFilterError(Error):
+  """Error when product filter is invalid."""
+
+
 @dataclasses.dataclass
 class Product:
   """Product data class."""
@@ -28,9 +36,44 @@ class Product:
   aggregator_id: int
   title: str
   product_type: str
+  brand: str
   image_link: Optional[str]
   additional_image_links: list[str]
 
   def to_json(self) -> str:
     """Returns a JSON string representation of the Product."""
     return json.dumps(dataclasses.asdict(self))
+
+
+@dataclasses.dataclass
+class ProductFilter:
+  """Product filter dataclass."""
+
+  product_type: Optional[str] = None
+  brands: Optional[list[str]] = None
+  offer_ids: Optional[list[str]] = None
+
+  def __post_init__(self) -> None:
+    if not self.product_type and not self.brands and not self.offer_ids:
+      raise ProductFilterError(
+          'At least one of product_type, brands, or offer_ids must be set.'
+      )
+
+  def get_sql_filter(self) -> str:
+    """Generates GoogleSQL WHERE clause based on filter settings."""
+    product_filters = []
+    if self.product_filter.product_type:
+      product_filters.append(
+          f'product_type LIKE "{self.product_filter.product_type}%"'
+      )
+    if self.product_filter.brands:
+      brand_list = ','.join(
+          [f'"{b.strip().lower() }"' for b in self.product_filter.brands]
+      )
+      product_filters.append(f'brand IN ({brand_list})')
+    if self.product_filter.offer_ids:
+      offer_list = ','.join(
+          [f'"{s.strip().lower()}"' for s in self.product_filter.offer_ids]
+      )
+      product_filters.append(f'offer_id IN ({offer_list})')
+    return '\n AND '.join(product_filters)
