@@ -14,41 +14,58 @@
 
 WITH
   ProductImages AS (
-  SELECT
-    offer_id,
-    merchant_id,
-    aggregator_id,
-    title,
-    product_type,
-    brand,
-    image_link,
-    CASE
-      WHEN off_set = 0 THEN 'primary'
-      ELSE 'additional'
-  END
-    AS image_type,
-  FROM
-    `${PROJECT_ID}.${DATASET_ID}.get_all_products_view`
-    UNNEST(ARRAY_CONCAT([image_link], additional_image_links)) AS image_link
-  WITH
-  OFFSET
-    AS off_set )
+    SELECT
+      offer_id,
+      merchant_id,
+      aggregator_id,
+      title,
+      product_type,
+      brand,
+      image_link,
+      CASE
+        WHEN off_set = 0 THEN 'primary'
+        ELSE 'additional'
+        END
+        AS image_type,
+    FROM
+      `${PROJECT_ID}.${DATASET_ID}.get_all_products_view`,
+        UNNEST(ARRAY_CONCAT([image_link], additional_image_links)) AS image_link
+      WITH OFFSET AS off_set
+  )
 SELECT
-  PI.*,
+  I.* EXCEPT (image_link),
   C.*,
 FROM
-  ProductImages AS PI
-RIGHT JOIN (
-  SELECT
-    * EXCEPT (row_rank)
-  FROM (
+  (
     SELECT
-      *,
-      RANK() OVER (PARTITION BY image_link ORDER BY timestamp DESC) AS row_rank
+      image_link,
+      ARRAY_AGG(
+        STRUCT(
+          offer_id,
+          merchant_id,
+          aggregator_id,
+          title,
+          product_type,
+          brand,
+          image_type)) AS offers
     FROM
-      `${PROJECT_ID}.${DATASET_ID}.${TABLE_NAME}`)
-  WHERE
-    row_rank = 1
-) AS C
-USING
-  (image_link)
+      ProductImages
+    GROUP BY
+      1
+  ) AS I
+RIGHT JOIN
+  (
+    SELECT
+      * EXCEPT (row_rank)
+    FROM
+      (
+        SELECT
+          *,
+          RANK() OVER (PARTITION BY image_link ORDER BY timestamp DESC) AS row_rank
+        FROM
+          `${PROJECT_ID}.${DATASET_ID}.${TABLE_NAME}`
+      )
+    WHERE
+      row_rank = 1
+  ) AS C
+  USING (image_link)

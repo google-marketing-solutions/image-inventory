@@ -62,18 +62,18 @@ class ProductFilter:
   def get_sql_filter(self) -> str:
     """Generates GoogleSQL WHERE clause based on filter settings."""
     product_filters = []
-    if self.product_filter.product_type:
+    if self.product_type:
       product_filters.append(
-          f'product_type LIKE "{self.product_filter.product_type}%"'
+          f'product_type LIKE "{self.product_type}%"'
       )
-    if self.product_filter.brands:
+    if self.brands:
       brand_list = ','.join(
-          [f'"{b.strip().lower() }"' for b in self.product_filter.brands]
+          [f'"{b.strip().lower() }"' for b in self.brands]
       )
       product_filters.append(f'brand IN ({brand_list})')
-    if self.product_filter.offer_ids:
+    if self.offer_ids:
       offer_list = ','.join(
-          [f'"{s.strip().lower()}"' for s in self.product_filter.offer_ids]
+          [f'"{s.strip().lower()}"' for s in self.offer_ids]
       )
       product_filters.append(f'offer_id IN ({offer_list})')
     return '\n AND '.join(product_filters)

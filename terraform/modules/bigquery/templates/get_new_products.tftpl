@@ -27,7 +27,9 @@ WITH
       title,
       brand,
       product_type,
-      image_link
+      image_link,
+      -- In cases where an image link can be associated with multiple products, only pick one
+      ROW_NUMBER() OVER (PARTITION BY image_link ORDER BY offer_id, title) AS rn
     FROM
       `${PROJECT_ID}.${DATASET_ID}.Products_${MERCHANT_ID}` AS P
     WHERE
@@ -49,7 +51,9 @@ WITH
       title,
       product_type,
       brand,
-      additional_image_link
+      additional_image_link,
+      # In cases where an image link can be associated with multiple products, only pick one
+      ROW_NUMBER() OVER (PARTITION BY additional_image_link ORDER BY offer_id, title) AS rn
     FROM
       `${PROJECT_ID}.${DATASET_ID}.Products_${MERCHANT_ID}` AS P,
       UNNEST(additional_image_links) AS additional_image_link
@@ -62,6 +66,9 @@ WITH
       )
       AND additional_image_link NOT IN (
         SELECT DISTINCT image_link FROM `${PROJECT_ID}.${DATASET_ID}.${TABLE_NAME}`
+        UNION ALL
+        -- Exclude additional links that are already captured by main link.
+        SELECT DISTINCT image_link FROM MainImages
       )
   ),
   ImageLinks AS (
@@ -73,11 +80,11 @@ WITH
       IFNULL(MI.product_type, AI.product_type) AS product_type,
       IFNULL(MI.brand, AI.brand) AS brand,
       MI.image_link,
-      ARRAY_AGG(AI.additional_image_link IGNORE NULLS) AS additional_image_links
+      ARRAY_AGG(DISTINCT AI.additional_image_link IGNORE NULLS) AS additional_image_links
     FROM
-      MainImages AS MI
+      (SELECT * FROM MainImages WHERE rn = 1) AS MI
     FULL OUTER JOIN
-      AdditionalImages AS AI
+      (SELECT * FROM AdditionalImages WHERE rn = 1) AS AI
       USING (offer_id, merchant_id, aggregator_id)
     GROUP BY 1, 2, 3, 4, 5, 6, 7
   )

@@ -21,6 +21,7 @@ WITH
   ),
   ImageLinks AS (
     SELECT
+      product_id,
       offer_id,
       merchant_id,
       aggregator_id,
@@ -30,7 +31,7 @@ WITH
       image_link,
       additional_image_links
     FROM
-      `${PROJECT_ID}.${DATASET_ID}.Products_${MERCHANT_ID}`
+      `${PROJECT_ID}.${DATASET_ID}.Products_${MERCHANT_ID}` AS P
     WHERE
       P._PARTITIONTIME = (
         SELECT
