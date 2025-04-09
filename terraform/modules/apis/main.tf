@@ -1,16 +1,8 @@
 # modules/apis/main.tf
 
-module "module_services" {
-  source  = "terraform-google-modules/project-factory/google//modules/project_services"
-  version = "~> 18.0"
-
-  project_id  = var.project_id
-  enable_apis = var.enable_apis
-
-  activate_apis = [
-    "apikeys.googleapis.com",
-  ]
-  disable_services_on_destroy = false
+resource "google_project_service" "enable_apis" {
+  project = var.project_id
+  service = "apikeys.googleapis.com"
 }
 
 resource "google_apikeys_key" "api_key" {
@@ -22,6 +14,6 @@ resource "google_apikeys_key" "api_key" {
       service = "generativelanguage.googleapis.com"
     }
   }
-  depends_on = [module.module_services]
+  depends_on = [google_project_service.enable_apis]
 }
 

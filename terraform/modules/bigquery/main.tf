@@ -1,17 +1,14 @@
 # modules/bigquery/main.tf
 
-module "module_services" {
-  source  = "terraform-google-modules/project-factory/google//modules/project_services"
-  version = "~> 18.0"
-
-  project_id  = var.project_id
-  enable_apis = var.enable_apis
-
-  activate_apis = [
-    "bigquery.googleapis.com",
-    "bigquerydatatransfer.googleapis.com"
-  ]
-  disable_services_on_destroy = false
+resource "google_project_service" "enable_apis" {
+  project = var.project_id
+  for_each = toset(
+    [
+      "bigquery.googleapis.com",
+      "bigquerydatatransfer.googleapis.com"
+    ]
+  )
+  service = each.key
 }
 
 resource "google_bigquery_dataset" "dataset" {
@@ -29,7 +26,7 @@ resource "google_bigquery_dataset" "dataset" {
     ignore_changes = [access]
     prevent_destroy = true
   }
-  depends_on = [module.module_services]
+  depends_on = [google_project_service.enable_apis]
 }
 
 resource "google_bigquery_data_transfer_config" "merchant_center_config" {

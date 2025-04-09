@@ -1,16 +1,8 @@
 # modules/cloudtasks/main.tf
 
-module "module_services" {
-  source  = "terraform-google-modules/project-factory/google//modules/project_services"
-  version = "~> 18.0"
-
-  project_id  = var.project_id
-  enable_apis = var.enable_apis
-
-  activate_apis = [
-    "cloudtasks.googleapis.com",
-  ]
-  disable_services_on_destroy = false
+resource "google_project_service" "enable_apis" {
+  project = var.project_id
+  service = "cloudtasks.googleapis.com"
 }
 
 resource "google_cloud_tasks_queue" "classify_products_queue" {
@@ -32,5 +24,5 @@ resource "google_cloud_tasks_queue" "classify_products_queue" {
     min_backoff   = "1s"
     max_doublings = 5
   }
-  depends_on = [module.module_services]
+  depends_on = [google_project_service.enable_apis]
 }

@@ -4,10 +4,6 @@ variable "project_id" {
   type = string
 }
 
-variable "enable_apis" {
-  type = bool
-}
-
 variable "service_account_email" {
   type = string
 }

@@ -21,23 +21,15 @@ resource "random_id" "default" {
   byte_length = 8
 }
 
-module "project-services" {
-  source  = "terraform-google-modules/project-factory/google//modules/project_services"
-  version = "~> 18.0"
-
-  project_id  = var.project_id
-  enable_apis = true
-
-  activate_apis = [
-    "iam.googleapis.com",
-  ]
-  disable_services_on_destroy = false
+resource "google_project_service" "enable_apis" {
+  project = var.project_id
+  service = "iam.googleapis.com"
 }
 
 resource "google_service_account" "service_account" {
   account_id   = var.service_account
   display_name = "Image Inventory Service Account"
-  depends_on   = [module.project-services]
+  depends_on   = [google_project_service.enable_apis]
 }
 
 resource "google_project_iam_member" "project" {
@@ -62,13 +54,11 @@ resource "google_project_iam_member" "project" {
 module "apis" {
   source      = "./modules/apis"
   project_id  = var.project_id
-  enable_apis = true
 }
 
 module "secrets" {
   source                 = "./modules/secrets"
   project_id             = var.project_id
-  enable_apis            = true
   service_account_member = google_service_account.service_account.member
   api_key                = module.apis.api_key_string
 }
@@ -76,7 +66,6 @@ module "secrets" {
 module "bigquery" {
   source                        = "./modules/bigquery"
   project_id                    = var.project_id
-  enable_apis                   = true
   service_account_email         = google_service_account.service_account.email
   default_service_account_email = "service-${data.google_project.project.number}@gcp-sa-bigquerydatatransfer.iam.gserviceaccount.com"
   bigquery_dataset_id           = var.bigquery_dataset_id
@@ -88,7 +77,6 @@ module "bigquery" {
 module "functions_classify_product" {
   source                = "./modules/functions"
   project_id            = var.project_id
-  enable_apis           = true
   service_account_email = google_service_account.service_account.email
   location              = var.location
   function_name         = "classify-product-tf"
@@ -115,7 +103,6 @@ module "functions_classify_product" {
 module "functions_push_products" {
   source                = "./modules/functions"
   project_id            = var.project_id
-  enable_apis           = true
   service_account_email = google_service_account.service_account.email
   location              = var.location
   function_name         = "push-products-tf"
@@ -140,7 +127,6 @@ module "functions_push_products" {
 module "scheduler" {
   source                = "./modules/scheduler"
   project_id            = var.project_id
-  enable_apis           = true
   location              = var.location
   function_url          = module.functions_push_products.function_url
   service_account_email = google_service_account.service_account.email
@@ -150,7 +136,6 @@ module "scheduler" {
 module "tasks" {
   source                = "./modules/tasks"
   project_id            = var.project_id
-  enable_apis           = true
   location              = var.location
   service_account_email = google_service_account.service_account.email
   function_url          = module.functions_classify_product.function_url

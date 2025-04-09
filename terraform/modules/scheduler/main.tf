@@ -1,17 +1,10 @@
 # modules/cloudscheduler/main.tf
 
-module "module_services" {
-  source  = "terraform-google-modules/project-factory/google//modules/project_services"
-  version = "~> 18.0"
-
-  project_id  = var.project_id
-  enable_apis = var.enable_apis
-
-  activate_apis = [
-    "cloudscheduler.googleapis.com",
-  ]
-  disable_services_on_destroy = false
+resource "google_project_service" "enable_apis" {
+  project = var.project_id
+  service = "cloudscheduler.googleapis.com"
 }
+
 
 resource "google_cloud_scheduler_job" "push_products" {
   name             = "scheduled-push-products"
@@ -44,6 +37,6 @@ resource "google_cloud_scheduler_job" "push_products" {
     }
   }
   depends_on = [
-    module.module_services
+    google_project_service.enable_apis
   ]
 }

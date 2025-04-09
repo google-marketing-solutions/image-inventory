@@ -1,21 +1,19 @@
 # modules/cloudfunctions/main.tf
 
-module "module_services" {
-  source  = "terraform-google-modules/project-factory/google//modules/project_services"
-  version = "~> 18.0"
-
-  project_id  = var.project_id
-  enable_apis = var.enable_apis
-
-  activate_apis = [
+resource "google_project_service" "enable_apis" {
+  project = var.project_id
+  for_each = toset(
+    [
     "cloudbuild.googleapis.com",
     "cloudfunctions.googleapis.com",
     "generativelanguage.googleapis.com",
     "storage.googleapis.com",
     "run.googleapis.com",
-  ]
-  disable_services_on_destroy = false
+    ]
+  )
+  service = each.key
 }
+
 
 resource "google_storage_bucket" "gcf_source" {
   name                        = "${var.random_id_prefix}-${var.function_name}-gcf-source"
@@ -85,6 +83,6 @@ resource "google_cloudfunctions2_function" "function" {
     environment_variables = var.environment_variables
   }
   depends_on = [
-    module.module_services,
+    google_project_service.enable_apis
   ]
 }

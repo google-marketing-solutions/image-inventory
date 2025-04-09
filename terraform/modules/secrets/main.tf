@@ -1,16 +1,8 @@
 # modules/secrets/main.tf
 
-module "module_services" {
-  source  = "terraform-google-modules/project-factory/google//modules/project_services"
-  version = "~> 18.0"
-
-  project_id  = var.project_id
-  enable_apis = var.enable_apis
-
-  activate_apis = [
-    "secretmanager.googleapis.com",
-  ]
-  disable_services_on_destroy = false
+resource "google_project_service" "enable_apis" {
+  project = var.project_id
+  service = "secretmanager.googleapis.com"
 }
 
 resource "google_secret_manager_secret" "api_key_secret" {
@@ -19,7 +11,7 @@ resource "google_secret_manager_secret" "api_key_secret" {
     auto {}
   }
   depends_on = [
-    module.module_services
+    google_project_service.enable_apis
   ]
 }
 
