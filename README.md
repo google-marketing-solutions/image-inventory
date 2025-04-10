@@ -198,6 +198,11 @@ Type yes and press Enter to confirm the deployment.
 >
 > If this is your first time using the Merchant Center Transfer, your ```terraform apply``` might fail with a "table not found" error. It can take up to 24 hours for the Merchant Center transfer table to become available. Once the transfer succeeds and the table exists in BigQuery, run the apply command again.
 
+Once Image Inventory is deployed, you have two options for running the solution:
+
+* **Always On** Go to Cloud Scheduler and enable the scheduled job which will push new products hourly for analysis.
+* **Ad-hoc** Open up the [colab notebook](https://colab.research.google.com/github/google-marketing-solutions/image-inventory/blob/main/colab/push_products_adhoc.ipynb) and manually push products to the queue.
+
 Lastly, you will need to enable the newly-created Cloud Scheduler job. Terraform sets the job to PAUSED to prevent the solution from running inadvertently. You can also force a manual run of the job to check if everything is working as expected; look at Cloud Logging or the output BQ table.
 
 ## **Destroy Deployed Resources**
