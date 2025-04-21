@@ -17,7 +17,7 @@
 import dataclasses
 import json
 import logging
-from typing import Optional
+from typing import List, Optional, Tuple
 
 from google.cloud import bigquery
 from google.cloud import tasks_v2
@@ -84,10 +84,12 @@ class ProductPusher:
     parent_queue = self.tasks_client.queue_path(
         self.project_id, self.location, self.queue_id
     )
-    request = tasks_v2.ListTasksRequest(parent=parent_queue)
-    response = self.tasks_client.list_tasks(request=request)
-    # Check if the queue is empty
-    return not bool(list(response.tasks))
+    try:
+      request = tasks_v2.ListTasksRequest(parent=parent_queue, page_size=1)
+      response = self.tasks_client.list_tasks(request=request)
+      return not bool(list(response.tasks))
+    except Exception as e:  # pylint: disable=broad-exception-caught
+      raise CloudTasksPublishError(f'Error checking queue status: {e}') from e
 
   def get_all_products_from_view(
       self,
@@ -118,7 +120,7 @@ class ProductPusher:
         '   brand,'
         '   image_link,'
         '   additional_image_links'
-        f' FROM {self.project_id}.{self.dataset_id}.get_all_products_view'
+        f' FROM `{self.project_id}.{self.dataset_id}.get_all_products_view`'
         f' WHERE {sql_filter}'
         f' LIMIT {product_limit}'
     )
@@ -126,8 +128,12 @@ class ProductPusher:
       query_job = self.bigquery_client.query(query)
       rows = query_job.result()
     except Exception as e:  # pylint: disable=broad-exception-caught
-      raise BigQueryReadError(e) from e
+      raise BigQueryReadError(f'Failed to read from BigQuery view: {e}') from e
+
     products = [Product(**row) for row in rows]
+    logging.info(
+        'Retrieved %d products from get_all_products_view.', len(products)
+    )
     return products
 
   def get_new_products_from_view(
@@ -158,7 +164,7 @@ class ProductPusher:
         '   brand,'
         '   image_link,'
         '   additional_image_links'
-        f' FROM {self.project_id}.{self.dataset_id}.get_new_products_view'
+        f' FROM `{self.project_id}.{self.dataset_id}.get_new_products_view`'
         f' WHERE {sql_filter}'
         f' LIMIT {product_limit}'
     )
@@ -166,52 +172,94 @@ class ProductPusher:
       query_job = self.bigquery_client.query(query)
       rows = query_job.result()
     except Exception as e:  # pylint: disable=broad-exception-caught
-      raise BigQueryReadError(e) from e
+      raise BigQueryReadError(f'Failed to read from BigQuery view: {e}') from e
+
     products = [Product(**row) for row in rows]
+    logging.info(
+        'Retrieved %d products from get_new_products_view.', len(products)
+    )
     return products
 
   def push_products(
       self,
       products: list[Product],
       cloud_function_url: str,
-  ):
-    """Pushes products to Cloud Tasks.
+  ) -> Tuple[int, int]:
+    """Pushes products to Cloud Tasks, attempting all products even if some fail.
 
     Args:
       products (list[Product]): A list of Product dataclasses.
       cloud_function_url (str): The URL of the Cloud Function to call.
 
-    Raises:
-      CloudTasksPublishError: if the Cloud Tasks publish fails
-    """
+    Returns:
+        A tuple containing:
+          - success_count (int): Number of products successfully pushed.
+          - failure_count (int): Number of products that failed to push.
 
-    task_count = 0
-    parent_queue = self.tasks_client.queue_path(
-        self.project_id, self.location, self.queue_id
+    Raises:
+        CloudTasksPublishError: If there's an issue getting the queue path.
+                                Individual task creation errors are logged.
+    """
+    success_count = 0
+    failure_count = 0
+    failed_products: List[Tuple[Product, str]] = []
+
+    try:
+      parent_queue = self.tasks_client.queue_path(
+          self.project_id, self.location, self.queue_id
+      )
+    except Exception as e:  # pylint: disable=broad-exception-caught
+      raise CloudTasksPublishError(f'Failed to resolve queue path: {e}') from e
+
+    logging.info(
+        'Attempting to push %d products to Cloud Tasks queue: %s',
+        len(products),
+        parent_queue,
     )
 
     for product in products:
       try:
-        # Construct the request body.
+        task_payload = product.to_json().encode('utf-8')
         task = tasks_v2.Task(
             http_request=tasks_v2.HttpRequest(
                 http_method=tasks_v2.HttpMethod.POST,
                 url=cloud_function_url,
-                body=product.to_json().encode(),
+                body=task_payload,
                 headers={
                     'Content-type': 'application/json',
                 },
             )
         )
-        # Use the client to build and send the task.
-        self.tasks_client.create_task(
-            tasks_v2.CreateTaskRequest(
-                parent=parent_queue,
-                task=task,
-            )
+        request = tasks_v2.CreateTaskRequest(
+            parent=parent_queue,
+            task=task,
         )
-        task_count += 1
-      except Exception as e:
-        raise CloudTasksPublishError(e) from e
+        self.tasks_client.create_task(request=request)
+        success_count += 1
 
-    logging.info('Submitted %d tasks to Cloud Tasks.', task_count)
+      except Exception as e:  # pylint: disable=broad-exception-caught
+        failure_count += 1
+        error_message = (
+            f'Failed to create task for product ID {product.offer_id}: {e}'
+        )
+        logging.error(error_message, exc_info=True)
+        failed_products.append((product, error_message))
+
+    logging.info(
+        'Finished pushing products. Success: %d, Failures: %d',
+        success_count,
+        failure_count,
+    )
+
+    if failed_products:
+      logging.warning(
+          '%d products failed to queue. See previous error logs for details.',
+          failure_count,
+          extra={
+              'json_fields': {
+                  'failed_offer_ids': [p.offer_id for p, _ in failed_products]
+              }
+          },
+      )
+
+    return success_count, failure_count
