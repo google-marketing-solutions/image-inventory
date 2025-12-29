@@ -14,7 +14,7 @@ variable "merchant_id" {
 
 variable "model_name" {
   type = string
-  default = "gemini-2.0-flash"
+  default = "gemini-2.5-flash"
 }
 
 variable "bigquery_dataset_id" {
